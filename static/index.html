@@ -1,0 +1,802 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Smart Piano</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { width: 100%; height: 100%; overflow: hidden; background: #08080f; }
+body {
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', 'JetBrains Mono', 'Courier New', monospace;
+  color: #e0dcd0;
+  -webkit-font-smoothing: antialiased;
+}
+
+#canvas { display: block; position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+
+#status {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 16px;
+  font-size: 14px;
+  color: #8884a0;
+  background: linear-gradient(180deg, rgba(8,8,15,0.95) 60%, rgba(8,8,15,0) 100%);
+  z-index: 10;
+  pointer-events: none;
+  letter-spacing: 0.04em;
+}
+#status-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: #facc15;
+  box-shadow: 0 0 6px currentColor;
+  flex-shrink: 0;
+}
+#status-dot.connected { background: #4ade80; box-shadow: 0 0 8px #4ade80; }
+#status-dot.disconnected { background: #ef4444; box-shadow: 0 0 6px #ef4444; }
+#status-text { font-weight: 500; }
+#latest-note {
+  margin-left: auto;
+  opacity: 0.7;
+  transition: opacity 0.15s;
+}
+#latest-note.active { opacity: 1; }
+
+#controls {
+  position: fixed;
+  bottom: 0; right: 0;
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px;
+  z-index: 10;
+}
+.ctrl-btn {
+  width: 44px; height: 44px;
+  border-radius: 50%;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: rgba(13,13,24,0.85);
+  color: #e0dcd0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  transition: all 0.2s;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.ctrl-btn:hover { border-color: rgba(255,255,255,0.35); background: rgba(20,20,36,0.9); }
+.ctrl-btn:active { transform: scale(0.92); }
+.ctrl-btn.recording {
+  border-color: #ef4444;
+  background: rgba(239,68,68,0.2);
+  color: #ef4444;
+  animation: pulse 1s ease-in-out infinite;
+}
+.ctrl-btn.playing { border-color: #4ade80; color: #4ade80; }
+@keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.4); } 50% { box-shadow: 0 0 0 8px rgba(239,68,68,0); } }
+
+#rec-status {
+  position: fixed;
+  bottom: 10px; right: 180px;
+  font-size: 13px;
+  color: #8884a0;
+  z-index: 10;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+#rec-status.visible { opacity: 1; }
+
+#rec-panel {
+  position: fixed;
+  right: 16px; bottom: 70px;
+  width: 240px;
+  max-height: 280px;
+  background: rgba(13,13,24,0.95);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 12px;
+  overflow: hidden;
+  z-index: 10;
+  display: none;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+}
+#rec-panel.open { display: flex; flex-direction: column; }
+#rec-panel-header {
+  padding: 10px 14px;
+  font-size: 13px;
+  color: #8884a0;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+#rec-panel-close {
+  background: none; border: none; color: #8884a0;
+  cursor: pointer; font-size: 14px; padding: 0 4px;
+  opacity: 0.6;
+}
+#rec-panel-close:hover { opacity: 1; }
+#rec-list {
+  overflow-y: auto;
+  flex: 1;
+  padding: 6px 0;
+}
+.rec-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  cursor: pointer;
+  font-size: 14px;
+  color: #c0bca8;
+  transition: background 0.15s;
+  border: none;
+  background: none;
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+}
+.rec-item:hover { background: rgba(255,255,255,0.05); }
+.rec-item.active { background: rgba(74,222,128,0.1); color: #4ade80; }
+.rec-item .rec-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+.rec-item .rec-play-icon { opacity: 0.4; font-size: 14px; }
+.rec-item:hover .rec-play-icon { opacity: 1; }
+.rec-item .rec-size { color: #666; font-size: 11px; }
+#rec-empty {
+  padding: 16px 14px;
+  font-size: 13px;
+  color: #666;
+  text-align: center;
+}
+</style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+<div id="status">
+  <span id="status-dot"></span>
+  <span id="status-text">Connecting...</span>
+  <span id="latest-note"></span>
+</div>
+<div id="rec-status"></div>
+<div id="rec-panel">
+  <div id="rec-panel-header">
+    <span>Recordings</span>
+    <button id="rec-panel-close">✕</button>
+  </div>
+  <div id="rec-list"></div>
+</div>
+<div id="controls">
+  <button class="ctrl-btn" id="btn-record" title="Record (R)">⏺</button>
+  <button class="ctrl-btn" id="btn-play" title="Play (Space)">▶</button>
+  <button class="ctrl-btn" id="btn-list" title="Recordings">☰</button>
+  <button class="ctrl-btn" id="btn-stop" title="Stop (Esc)">⏹</button>
+</div>
+<script>
+// ─── CONFIGURATION ────────────────────────────────────────────────
+const NOTE_MIN = 21;  // A0
+const NOTE_MAX = 108; // C8
+const NOTE_COUNT = NOTE_MAX - NOTE_MIN + 1;
+const WHITE_SEMITONES = new Set([0, 2, 4, 5, 7, 9, 11]);
+const KEYBOARD_RATIO = 0.25;
+const PARTICLE_MAX = 500;
+const BAR_MAX = 50;
+const BAR_DURATION_MS = 3000;
+const PARTICLE_LIFE_MS = 1500;
+const KEY_RELEASE_MS = 300;
+const RECONNECT_DELAY_MS = 3000;
+
+// ─── DOM ELEMENTS ─────────────────────────────────────────────────
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const statusDot = document.getElementById('status-dot');
+const statusText = document.getElementById('status-text');
+const latestNoteEl = document.getElementById('latest-note');
+const btnRecord = document.getElementById('btn-record');
+const btnPlay = document.getElementById('btn-play');
+const btnStop = document.getElementById('btn-stop');
+const btnList = document.getElementById('btn-list');
+const recStatus = document.getElementById('rec-status');
+const recPanel = document.getElementById('rec-panel');
+const recList = document.getElementById('rec-list');
+const recPanelClose = document.getElementById('rec-panel-close');
+
+// ─── STATE ────────────────────────────────────────────────────────
+let W, H, kbTop, kbHeight, whiteKeyWidth, blackKeyWidth, blackKeyHeight;
+const activeNotes = new Map();        // note -> { velocity, releasedAt }
+const whiteKeys = [];                 // { note, x }
+const blackKeys = [];                 // { note, x }
+const noteToX = new Float64Array(128).fill(-1);
+const isWhiteKey = new Uint8Array(128);
+
+const particles = [];                 // { x, y, vx, vy, hue, r, alpha, life }
+const bars = [];                      // { note, x, hue, alpha, born, label }
+
+let recentHue = 210;                  // exponential moving average hue for background
+let ws = null;
+let connected = false;
+let animId = null;
+let lastTime = 0;
+let isRecording = false;
+let isPlaying = false;
+let recDuration = 0;
+let recTimer = null;
+let recordings = [];
+let selectedRecording = null;
+
+// ─── PIANO LAYOUT ─────────────────────────────────────────────────
+function computeLayout() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+  kbHeight = Math.floor(H * KEYBOARD_RATIO);
+  kbTop = H - kbHeight;
+
+  // Collect white key notes
+  whiteKeys.length = 0;
+  blackKeys.length = 0;
+  noteToX.fill(-1);
+
+  for (let n = NOTE_MIN; n <= NOTE_MAX; n++) {
+    isWhiteKey[n] = WHITE_SEMITONES.has(n % 12);
+    if (isWhiteKey[n]) whiteKeys.push({ note: n, x: 0 });
+  }
+
+  whiteKeyWidth = W / whiteKeys.length;
+  whiteKeys.forEach((wk, i) => {
+    wk.x = i * whiteKeyWidth;
+    noteToX[wk.note] = wk.x;
+  });
+
+  // Black keys: positioned between adjacent white keys
+  blackKeyWidth = whiteKeyWidth * 0.58;
+  blackKeyHeight = kbHeight * 0.62;
+
+  // Build mapping of white key index by note
+  const whiteIndexByNote = {};
+  whiteKeys.forEach((wk, i) => { whiteIndexByNote[wk.note] = i; });
+
+  for (let n = NOTE_MIN; n <= NOTE_MAX; n++) {
+    if (isWhiteKey[n]) continue;
+    // Find adjacent white keys
+    let leftNote = n - 1;
+    let rightNote = n + 1;
+    while (leftNote >= NOTE_MIN && !isWhiteKey[leftNote]) leftNote--;
+    while (rightNote <= NOTE_MAX && !isWhiteKey[rightNote]) rightNote++;
+    if (leftNote < NOTE_MIN || rightNote > NOTE_MAX) continue;
+
+    const leftIdx = whiteIndexByNote[leftNote];
+    const rightIdx = whiteIndexByNote[rightNote];
+    if (leftIdx === undefined || rightIdx === undefined) continue;
+
+    const centerX = (whiteKeys[leftIdx].x + whiteKeyWidth + whiteKeys[rightIdx].x) / 2;
+    const x = centerX - blackKeyWidth / 2;
+    blackKeys.push({ note: n, x });
+    noteToX[n] = x;
+  }
+}
+
+// ─── HUE FOR NOTE ─────────────────────────────────────────────────
+function noteHue(note) { return (note * 30) % 360; }
+
+// ─── PARTICLE SYSTEM ──────────────────────────────────────────────
+function spawnParticles(note, velocity) {
+  const cx = noteToX[note] + (isWhiteKey[note] ? whiteKeyWidth / 2 : blackKeyWidth / 2);
+  const cy = kbTop + kbHeight * 0.3;
+  const hue = noteHue(note);
+  const count = 10 + Math.floor((velocity / 127) * 10);
+  const speed = 0.8 + (velocity / 127) * 2.5;
+  const maxR = 2 + (velocity / 127) * 4;
+
+  for (let i = 0; i < count; i++) {
+    if (particles.length >= PARTICLE_MAX) particles.shift();
+    const angle = -Math.PI / 2 + (Math.random() - 0.5) * 1.2;
+    const spd = speed * (0.6 + Math.random() * 0.8);
+    particles.push({
+      x: cx + (Math.random() - 0.5) * whiteKeyWidth * 0.8,
+      y: cy,
+      vx: Math.cos(angle) * spd,
+      vy: Math.sin(angle) * spd,
+      hue,
+      r: 1 + Math.random() * maxR,
+      alpha: 0.85 + Math.random() * 0.15,
+      life: PARTICLE_LIFE_MS,
+    });
+  }
+}
+
+function updateParticles(dt) {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx;
+    p.y += p.vy;
+    p.life -= dt;
+    p.vy -= 0.0003 * dt; // slight gravity upward drift
+    if (p.life <= 0) {
+      particles.splice(i, 1);
+    }
+  }
+}
+
+function drawParticles() {
+  for (const p of particles) {
+    const t = 1 - p.life / PARTICLE_LIFE_MS;
+    const alpha = p.alpha * (1 - t * t);
+    const r = p.r * (1 - t * 0.7);
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+    ctx.fillStyle = `hsla(${p.hue}, 85%, ${55 + 10 * (1 - t)}%, ${alpha})`;
+    ctx.fill();
+  }
+}
+
+// ─── FALLING NOTE BARS ────────────────────────────────────────────
+function spawnBar(note, velocity) {
+  if (bars.length >= BAR_MAX) bars.shift();
+  const label = noteName(note);
+  bars.push({
+    note,
+    x: noteToX[note],
+    hue: noteHue(note),
+    alpha: 0.25 + (velocity / 127) * 0.35,
+    born: performance.now(),
+    label,
+  });
+}
+
+function updateBars(now) {
+  for (let i = bars.length - 1; i >= 0; i--) {
+    const b = bars[i];
+    const elapsed = now - b.born;
+    if (elapsed > BAR_DURATION_MS) {
+      bars.splice(i, 1);
+    }
+  }
+}
+
+function drawBars(now) {
+  for (const b of bars) {
+    const elapsed = now - b.born;
+    const t = elapsed / BAR_DURATION_MS;
+    const noteW = isWhiteKey[b.note] ? whiteKeyWidth : blackKeyWidth;
+    const cx = b.x + noteW / 2;
+    const y = t * kbTop;
+
+    let alpha = b.alpha;
+    if (t < 0.1) alpha *= t / 0.1;
+    if (t > 0.8) alpha *= (1 - t) / 0.2;
+
+    const fontSize = Math.max(20, noteW * 1.5);
+    ctx.font = `${fontSize}px serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = `hsla(${b.hue}, 80%, 55%, ${alpha})`;
+    ctx.fillText('♪', cx, y);
+  }
+}
+
+// ─── NOTE NAME ────────────────────────────────────────────────────
+const JIANPU_MAP = ['1', '#1', '2', '#2', '3', '4', '#4', '5', '#5', '6', '#6', '7'];
+function noteToJianpu(note) {
+  const mid_oct = 4;
+  const oct = Math.floor(note / 12 - 1);
+  const diff = oct - mid_oct;
+  const num = JIANPU_MAP[note % 12];
+  if (diff === 0) return num;
+  const dots = diff > 0 ? '˙'.repeat(diff) : '_.'.repeat(-diff);
+  return dots + num;
+}
+function noteName(note) {
+  return noteToJianpu(note);
+}
+
+function sendCommand(action) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ action }));
+  }
+}
+
+function updateRecStatus() {
+  if (isRecording) {
+    const secs = Math.floor(recDuration);
+    const min = Math.floor(secs / 60);
+    const s = secs % 60;
+    recStatus.textContent = `● REC ${String(min).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    recStatus.className = 'visible';
+  } else if (isPlaying) {
+    recStatus.textContent = '▶ Playing...';
+    recStatus.className = 'visible';
+  } else {
+    recStatus.className = '';
+  }
+}
+
+function setUIState() {
+  if (isRecording) {
+    btnRecord.classList.add('recording');
+    btnRecord.title = 'Stop Recording (R)';
+  } else {
+    btnRecord.classList.remove('recording');
+    btnRecord.title = 'Record (R)';
+  }
+  if (isPlaying) {
+    btnPlay.classList.add('playing');
+    btnPlay.title = 'Playing...';
+  } else {
+    btnPlay.classList.remove('playing');
+    btnPlay.title = 'Play (Space)';
+  }
+}
+
+btnRecord.addEventListener('click', () => {
+  if (isRecording) { sendCommand('stop_recording'); }
+  else { sendCommand('start_recording'); recDuration = 0; }
+});
+
+btnPlay.addEventListener('click', () => {
+  if (isPlaying) { sendCommand('stop_playback'); }
+  else if (selectedRecording) { playRecording(selectedRecording); }
+  else { sendCommand('play_latest'); }
+});
+
+btnStop.addEventListener('click', () => {
+  if (isRecording) sendCommand('stop_recording');
+  if (isPlaying) sendCommand('stop_playback');
+});
+
+btnList.addEventListener('click', () => {
+  recPanel.classList.toggle('open');
+  if (recPanel.classList.contains('open')) fetchRecordings();
+});
+
+recPanelClose.addEventListener('click', () => {
+  recPanel.classList.remove('open');
+});
+
+function playRecording(filename) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  selectedRecording = filename;
+  ws.send(JSON.stringify({ action: 'play_file', filename }));
+  recPanel.classList.remove('open');
+  renderRecordingList();
+}
+
+function fetchRecordings() {
+  fetch('/recordings')
+    .then(r => r.json())
+    .then(data => { recordings = data; renderRecordingList(); })
+    .catch(() => {});
+}
+
+function renderRecordingList() {
+  recList.innerHTML = '';
+  if (!recordings.length) {
+    recList.innerHTML = '<div id="rec-empty">No recordings yet.<br>Press ⏺ to record.</div>';
+    return;
+  }
+  recordings.forEach(rec => {
+    const item = document.createElement('button');
+    item.className = 'rec-item';
+    if (rec.filename === selectedRecording) item.classList.add('active');
+    item.innerHTML = `<span class="rec-play-icon">▶</span><span class="rec-name">${rec.filename}</span><span class="rec-size">${formatSize(rec.size)}</span>`;
+    item.addEventListener('click', (e) => {
+      e.stopPropagation();
+      playRecording(rec.filename);
+    });
+    recList.appendChild(item);
+  });
+}
+
+function formatSize(bytes) {
+  if (bytes < 1024) return bytes + 'B';
+  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + 'KB';
+  return (bytes / 1048576).toFixed(1) + 'MB';
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  if (e.code === 'KeyR' && !e.metaKey && !e.ctrlKey) {
+    e.preventDefault();
+    if (isRecording) { sendCommand('stop_recording'); }
+    else { sendCommand('start_recording'); recDuration = 0; }
+  } else if (e.code === 'Space') {
+    e.preventDefault();
+    if (isPlaying) { sendCommand('stop_playback'); }
+    else if (selectedRecording) { playRecording(selectedRecording); }
+    else { sendCommand('play_latest'); }
+  } else if (e.code === 'Escape') {
+    if (isRecording) sendCommand('stop_recording');
+    if (isPlaying) sendCommand('stop_playback');
+    recPanel.classList.remove('open');
+  }
+});
+
+// ─── DRAW PIANO KEYBOARD ──────────────────────────────────────────
+function drawKeyboard(now) {
+  // White keys
+  for (const wk of whiteKeys) {
+    const active = activeNotes.get(wk.note);
+    let fill, shadowBlur = 0, shadowColor = 'transparent';
+    if (active && (!active.releasedAt || now - active.releasedAt < KEY_RELEASE_MS)) {
+      const hue = noteHue(wk.note);
+      const sat = 70;
+      const lit = active.releasedAt
+        ? 75 + 20 * (1 - Math.min(1, (now - active.releasedAt) / KEY_RELEASE_MS))
+        : 55 + (active.velocity / 127) * 25;
+      fill = `hsl(${hue}, ${sat}%, ${lit}%)`;
+      shadowBlur = 12 + (active.velocity / 127) * 20;
+      shadowColor = `hsla(${hue}, 80%, 50%, 0.6)`;
+    } else {
+      fill = '#e8e4dc';
+    }
+    const x = wk.x + 1;
+    const w = whiteKeyWidth - 2;
+    const h = kbHeight - 2;
+    ctx.fillStyle = fill;
+    ctx.shadowColor = shadowColor;
+    ctx.shadowBlur = shadowBlur;
+    ctx.beginPath();
+    const r = 4;
+    ctx.moveTo(x + r, kbTop);
+    ctx.lineTo(x + w - r, kbTop);
+    ctx.quadraticCurveTo(x + w, kbTop, x + w, kbTop + r);
+    ctx.lineTo(x + w, kbTop + h);
+    ctx.lineTo(x, kbTop + h);
+    ctx.lineTo(x, kbTop + r);
+    ctx.quadraticCurveTo(x, kbTop, x + r, kbTop);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    // White key border
+    ctx.strokeStyle = 'rgba(0,0,0,0.12)';
+    ctx.lineWidth = 0.5;
+    ctx.stroke();
+  }
+
+  // Black keys
+  for (const bk of blackKeys) {
+    const active = activeNotes.get(bk.note);
+    let fill, shadowBlur = 0, shadowColor = 'transparent';
+    if (active && (!active.releasedAt || now - active.releasedAt < KEY_RELEASE_MS)) {
+      const hue = noteHue(bk.note);
+      const lit = active.releasedAt
+        ? 30 + 15 * (1 - Math.min(1, (now - active.releasedAt) / KEY_RELEASE_MS))
+        : 25 + (active.velocity / 127) * 20;
+      fill = `hsl(${hue}, 85%, ${lit}%)`;
+      shadowBlur = 8 + (active.velocity / 127) * 14;
+      shadowColor = `hsla(${hue}, 80%, 45%, 0.5)`;
+    } else {
+      fill = '#1a1a22';
+    }
+    const x = bk.x;
+    const w = blackKeyWidth;
+    const h = blackKeyHeight;
+    ctx.fillStyle = fill;
+    ctx.shadowColor = shadowColor;
+    ctx.shadowBlur = shadowBlur;
+    ctx.beginPath();
+    const rr = 3;
+    ctx.moveTo(x + rr, kbTop);
+    ctx.lineTo(x + w - rr, kbTop);
+    ctx.quadraticCurveTo(x + w, kbTop, x + w, kbTop + rr);
+    ctx.lineTo(x + w, kbTop + h);
+    ctx.lineTo(x, kbTop + h);
+    ctx.lineTo(x, kbTop + rr);
+    ctx.quadraticCurveTo(x, kbTop, x + rr, kbTop);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+
+  // Large jianpu labels above pressed keys
+  const labelFontSize = Math.max(28, whiteKeyWidth * 3.5);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'bottom';
+  const drawn = new Set();
+
+  for (const [note, active] of activeNotes) {
+    if (!active.releasedAt || now - active.releasedAt < KEY_RELEASE_MS) {
+      const x = noteToX[note];
+      if (x < 0) continue;
+      const nw = isWhiteKey[note] ? whiteKeyWidth : blackKeyWidth;
+      const key = note % 12;
+      // Only draw once per pitch class (prefer white key)
+      if (drawn.has(key)) continue;
+      drawn.add(key);
+
+      const alpha = active.releasedAt
+        ? 1 - Math.min(1, (now - active.releasedAt) / KEY_RELEASE_MS)
+        : 1;
+      const hue = noteHue(note);
+      const labelY = kbTop - 6;
+
+      ctx.font = `bold ${labelFontSize}px 'SF Mono','Fira Code',monospace`;
+      ctx.strokeStyle = `rgba(8,8,15,${alpha * 0.6})`;
+      ctx.lineWidth = 4;
+      ctx.strokeText(noteToJianpu(note), x + nw / 2, labelY);
+      ctx.fillStyle = `hsla(${hue}, 85%, 60%, ${alpha})`;
+      ctx.fillText(noteToJianpu(note), x + nw / 2, labelY);
+    }
+  }
+  ctx.shadowBlur = 0;
+}
+
+// ─── BACKGROUND AMBIENCE ──────────────────────────────────────────
+function drawBackground() {
+  // Subtle gradient from current hue
+  const grad = ctx.createLinearGradient(0, 0, W, H);
+  grad.addColorStop(0, `hsla(${recentHue}, 15%, 4%, 1)`);
+  grad.addColorStop(0.6, `hsla(${recentHue}, 10%, 3%, 1)`);
+  grad.addColorStop(1, '#08080f');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  // Subtle grid
+  ctx.strokeStyle = 'rgba(255,255,255,0.018)';
+  ctx.lineWidth = 1;
+  const gs = 60;
+  for (let x = 0; x < W; x += gs) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, kbTop); ctx.stroke();
+  }
+  for (let y = 0; y < kbTop; y += gs) {
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+  }
+
+  // Keyboard separator glow line
+  const lineGrad = ctx.createLinearGradient(0, kbTop - 1, 0, kbTop + 3);
+  lineGrad.addColorStop(0, 'rgba(255,255,255,0)');
+  lineGrad.addColorStop(0.5, 'rgba(255,255,255,0.08)');
+  lineGrad.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.strokeStyle = lineGrad;
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, kbTop); ctx.lineTo(W, kbTop); ctx.stroke();
+}
+
+// ─── RENDER LOOP ──────────────────────────────────────────────────
+function render(timestamp) {
+  const dt = lastTime ? timestamp - lastTime : 16;
+  lastTime = timestamp;
+
+  ctx.clearRect(0, 0, W, H);
+
+  drawBackground(timestamp);
+  updateParticles(dt);
+  updateBars(timestamp);
+  drawParticles();
+  drawBars(timestamp);
+  drawKeyboard(timestamp);
+
+  // Gradually shift background hue toward recent average
+  if (activeNotes.size > 0) {
+    let hueSum = 0;
+    for (const [note] of activeNotes) hueSum += noteHue(note);
+    const targetHue = hueSum / activeNotes.size;
+    recentHue += (targetHue - recentHue) * 0.003;
+  } else {
+    recentHue += (210 - recentHue) * 0.001;
+  }
+
+  animId = requestAnimationFrame(render);
+}
+
+// ─── WEBSOCKET ────────────────────────────────────────────────────
+function connectWS() {
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+
+  statusDot.className = '';
+  statusText.textContent = 'Connecting...';
+
+  try {
+    ws = new WebSocket(`ws://${location.host}/ws`);
+  } catch (e) {
+    scheduleReconnect();
+    return;
+  }
+
+  ws.onopen = () => {
+    connected = true;
+    statusDot.className = 'connected';
+    statusText.textContent = 'Connected';
+    fetchRecordings();
+  };
+
+  ws.onclose = () => {
+    connected = false;
+    activeNotes.clear();
+    bars.length = 0;
+    statusDot.className = 'disconnected';
+    statusText.textContent = 'Disconnected';
+    scheduleReconnect();
+  };
+
+  ws.onerror = () => {
+    // onclose will fire after this
+  };
+
+  ws.onmessage = (e) => {
+    let msg;
+    try { msg = JSON.parse(e.data); } catch { return; }
+
+    if (msg.type === 'note_on') {
+      const vel = Math.min(127, Math.max(1, msg.velocity));
+      activeNotes.set(msg.note, { velocity: vel, releasedAt: 0 });
+      spawnParticles(msg.note, vel);
+      spawnBar(msg.note, vel);
+
+      latestNoteEl.textContent = `${msg.name}  •  velocity ${vel}`;
+      latestNoteEl.className = 'active';
+      clearTimeout(latestNoteEl._timeout);
+      latestNoteEl._timeout = setTimeout(() => { latestNoteEl.className = ''; }, 2000);
+    } else if (msg.type === 'note_off') {
+      const existing = activeNotes.get(msg.note);
+      if (existing) {
+        existing.releasedAt = performance.now();
+        setTimeout(() => {
+          const check = activeNotes.get(msg.note);
+          if (check && check.releasedAt && performance.now() - check.releasedAt >= KEY_RELEASE_MS) {
+            activeNotes.delete(msg.note);
+          }
+        }, KEY_RELEASE_MS + 50);
+      } else {
+        activeNotes.delete(msg.note);
+      }
+    } else if (msg.type === 'recording_status') {
+      isRecording = msg.active;
+      clearInterval(recTimer);
+      if (isRecording) {
+        recDuration = 0;
+        recTimer = setInterval(() => { recDuration++; updateRecStatus(); }, 1000);
+      } else {
+        recTimer = null;
+        fetchRecordings();
+      }
+      setUIState();
+      updateRecStatus();
+    } else if (msg.type === 'playback_start') {
+      isPlaying = true;
+      setUIState();
+      updateRecStatus();
+    } else if (msg.type === 'playback_end') {
+      isPlaying = false;
+      setUIState();
+      updateRecStatus();
+      fetchRecordings();
+    }
+  };
+}
+
+function scheduleReconnect() {
+  setTimeout(() => {
+    if (!connected) connectWS();
+  }, RECONNECT_DELAY_MS);
+}
+
+// ─── INIT ─────────────────────────────────────────────────────────
+function init() {
+  computeLayout();
+  connectWS();
+  lastTime = 0;
+  animId = requestAnimationFrame(render);
+}
+
+window.addEventListener('resize', () => {
+  computeLayout();
+  // Clamp particles to new bounds
+  for (const p of particles) {
+    if (p.y > kbTop) p.y = kbTop - 1;
+  }
+});
+
+window.addEventListener('load', init);
+</script>
+</body>
+</html>
