@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.pyo
+.sisyphus/
+recordings/
+*.mid
+.venv/
+venv/
+.env
+.DS_Store
