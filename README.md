@@ -4,15 +4,30 @@ Real-time MIDI piano visualization and recording. Connect your electronic piano 
 
 ## Features
 
+- **Staff Notation (五线谱)** — grand staff (treble + bass clef) shows notes in real time as they're played
 - **Live MIDI Monitor** — see every note you play in the terminal
-- **Web Visualization** — canvas-based piano keyboard with particle effects, falling note symbols, and jianpu (简谱) display
+- **Web Visualization** — canvas-based piano keyboard with particle effects and falling note bars
 - **Record & Playback** — record sessions to `.mid` files and play them back through your piano
 - **Dark UI** — atmospheric dark theme with color-coded notes and smooth animations
 
 ## Setup
 
+### System Dependencies
+
 ```bash
-pip install -r requirements.txt
+# Debian/Ubuntu
+sudo apt install -y pkg-config libasound2-dev libjack-dev
+
+# macOS
+brew install pkg-config
+```
+
+### Python Environment
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate   # Linux/macOS
+.venv/bin/pip install -r requirements.txt
 ```
 
 ## Usage
