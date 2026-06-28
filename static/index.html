@@ -47,6 +47,31 @@ body {
 }
 #latest-note.active { opacity: 1; }
 
+#midi-warning {
+  position: fixed;
+  top: 28px; left: 0; right: 0;
+  height: 0;
+  background: rgba(239, 68, 68, 0.12);
+  border-bottom: 1px solid rgba(239, 68, 68, 0);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 13px;
+  color: rgba(239, 68, 68, 0);
+  z-index: 9;
+  overflow: hidden;
+  transition: height 0.4s ease, border-color 0.4s, color 0.3s, background 0.3s;
+  pointer-events: none;
+}
+#midi-warning.visible {
+  height: 32px;
+  background: rgba(239, 68, 68, 0.1);
+  border-bottom-color: rgba(239, 68, 68, 0.2);
+  color: #f87171;
+}
+#midi-warning-icon { font-size: 15px; }
+
 #controls {
   position: fixed;
   bottom: 0; right: 0;
@@ -170,6 +195,10 @@ body {
   <span id="status-text">Connecting...</span>
   <span id="latest-note"></span>
 </div>
+<div id="midi-warning">
+  <span id="midi-warning-icon">🎹</span>
+  <span id="midi-warning-text">No MIDI device connected — playback only</span>
+</div>
 <div id="rec-status"></div>
 <div id="rec-panel">
   <div id="rec-panel-header">
@@ -212,6 +241,8 @@ const recStatus = document.getElementById('rec-status');
 const recPanel = document.getElementById('rec-panel');
 const recList = document.getElementById('rec-list');
 const recPanelClose = document.getElementById('rec-panel-close');
+const midiWarning = document.getElementById('midi-warning');
+const midiWarningText = document.getElementById('midi-warning-text');
 
 // ─── STATE ────────────────────────────────────────────────────────
 let W, H, kbTop, kbHeight, whiteKeyWidth, blackKeyWidth, blackKeyHeight;
@@ -227,6 +258,7 @@ const bars = [];                      // { note, x, hue, alpha, born, label }
 let recentHue = 210;                  // exponential moving average hue for background
 let ws = null;
 let connected = false;
+let midiConnected = false;
 let animId = null;
 let lastTime = 0;
 let isRecording = false;
@@ -428,7 +460,14 @@ function setUIState() {
     btnRecord.title = 'Stop Recording (R)';
   } else {
     btnRecord.classList.remove('recording');
-    btnRecord.title = 'Record (R)';
+    btnRecord.title = midiConnected ? 'Record (R)' : 'No MIDI device — recording unavailable';
+  }
+  if (!midiConnected) {
+    btnRecord.style.opacity = '0.35';
+    btnRecord.style.pointerEvents = 'none';
+  } else {
+    btnRecord.style.opacity = '';
+    btnRecord.style.pointerEvents = '';
   }
   if (isPlaying) {
     btnPlay.classList.add('playing');
@@ -439,7 +478,29 @@ function setUIState() {
   }
 }
 
+function updateMidiWarning() {
+  if (midiConnected) {
+    midiWarning.classList.remove('visible');
+  } else {
+    midiWarning.classList.add('visible');
+  }
+}
+
+function updateStatusIndicator() {
+  if (!connected) {
+    statusDot.className = 'disconnected';
+    statusText.textContent = 'Disconnected';
+  } else if (!midiConnected) {
+    statusDot.className = '';
+    statusText.textContent = 'Connected (no MIDI)';
+  } else {
+    statusDot.className = 'connected';
+    statusText.textContent = 'Connected';
+  }
+}
+
 btnRecord.addEventListener('click', () => {
+  if (!midiConnected) return;
   if (isRecording) { sendCommand('stop_recording'); }
   else { sendCommand('start_recording'); recDuration = 0; }
 });
@@ -508,6 +569,7 @@ document.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
   if (e.code === 'KeyR' && !e.metaKey && !e.ctrlKey) {
     e.preventDefault();
+    if (!midiConnected) return;
     if (isRecording) { sendCommand('stop_recording'); }
     else { sendCommand('start_recording'); recDuration = 0; }
   } else if (e.code === 'Space') {
@@ -704,17 +766,18 @@ function connectWS() {
 
   ws.onopen = () => {
     connected = true;
-    statusDot.className = 'connected';
-    statusText.textContent = 'Connected';
+    updateStatusIndicator();
     fetchRecordings();
   };
 
   ws.onclose = () => {
     connected = false;
+    midiConnected = false;
     activeNotes.clear();
     bars.length = 0;
-    statusDot.className = 'disconnected';
-    statusText.textContent = 'Disconnected';
+    updateStatusIndicator();
+    updateMidiWarning();
+    setUIState();
     scheduleReconnect();
   };
 
@@ -770,6 +833,11 @@ function connectWS() {
       setUIState();
       updateRecStatus();
       fetchRecordings();
+    } else if (msg.type === 'midi_status') {
+      midiConnected = msg.connected;
+      updateStatusIndicator();
+      updateMidiWarning();
+      setUIState();
     }
   };
 }

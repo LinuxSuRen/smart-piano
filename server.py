@@ -25,6 +25,7 @@ app = FastAPI(title="Smart Piano")
 
 connected_clients: set[WebSocket] = set()
 
+midi_connected: bool = False
 recording_active: bool = False
 recorded_events: list[tuple[float, mido.Message]] = []
 recording_start_time: float = 0.0
@@ -93,6 +94,8 @@ def on_midi_message(message: mido.Message) -> None:
 @app.post("/record/start")
 async def start_recording() -> JSONResponse:
     global recording_active, recorded_events, recording_start_time
+    if not midi_connected:
+        return JSONResponse({"ok": False, "error": "No MIDI device connected — recording unavailable"})
     if recording_active:
         return JSONResponse({"ok": False, "error": "Already recording"})
     recorded_events = []
@@ -216,6 +219,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
     connected_clients.add(ws)
 
     await ws.send_text(json.dumps({"type": "recording_status", "active": recording_active}))
+    await ws.send_text(json.dumps({"type": "midi_status", "connected": midi_connected}))
 
     try:
         while True:
@@ -267,11 +271,17 @@ async def serve() -> None:
 
 
 def main() -> None:
-    port_name = select_midi_port()
-    print(f"MIDI input: {port_name}")
+    global midi_connected, midi_input_port, midi_output_port
 
-    global midi_input_port, midi_output_port
-    midi_input_port = mido.open_input(port_name, callback=on_midi_message)
+    port_name = select_midi_port()
+    if port_name is None:
+        print("⚠ No MIDI input device found — running in playback-only mode.")
+        print("  Connect a MIDI device and restart the server to enable live input & recording.")
+        midi_connected = False
+    else:
+        print(f"MIDI input: {port_name}")
+        midi_input_port = mido.open_input(port_name, callback=on_midi_message)
+        midi_connected = True
 
     out_names = mido.get_output_names()
     if out_names:
@@ -293,11 +303,11 @@ def main() -> None:
         print("Stopped.")
 
 
-def select_midi_port() -> str:
+def select_midi_port() -> str | None:
     names = mido.get_input_names()
     if not names:
         print("No MIDI input ports detected.", file=sys.stderr)
-        sys.exit(1)
+        return None
     if len(names) == 1:
         print(f"Auto-selected MIDI port: {names[0]}")
         return names[0]
